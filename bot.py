@@ -27,6 +27,23 @@ def check_ffmpeg():
 
 check_ffmpeg()
 
+ytdl_format_options = {
+    'format': 'bestaudio/best',
+    'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'mp3',
+        'preferredquality': '192',
+    }],
+    'cookiefile': 'youtube_cookies.txt',  # Path to your cookies file
+}
+
+ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
+
+ffmpeg_options = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn',
+}
+
 # Set up yt_dlp options
 ytdl_format_options = {
     'format': 'bestaudio/best',
@@ -174,7 +191,7 @@ async def play_command(ctx, *, song_name):
             q=song_name
         )
         response = request.execute()
-        if response['items']]:
+        if response['items']:
             video_id = response['items'][0]['id']['videoId']
             video_url = f"https://www.youtube.com/watch?v={video_id}"
             title = response['items'][0]['snippet']['title']

@@ -3,7 +3,7 @@ __pycache__/
 
 # Environment variables file
 .env
-
+youtube_cookies.txt
 # VSCode settings
 .vscode/
 
