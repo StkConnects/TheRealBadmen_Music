@@ -5,16 +5,13 @@ import yt_dlp
 import os
 from collections import deque
 
-from googleapiclient.discovery import build
 from dotenv import load_dotenv
 import subprocess
-import urllib.request
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Retrieve API key and bot token from environment
-YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
+# Retrieve bot token from environment
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 # Ensure ffmpeg is installed
@@ -27,6 +24,7 @@ def check_ffmpeg():
 
 check_ffmpeg()
 
+# Set up yt-dlp options for YouTube
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'postprocessors': [{
@@ -35,23 +33,6 @@ ytdl_format_options = {
         'preferredquality': '192',
     }],
     'cookiefile': 'youtube_cookies.txt',  # Path to your cookies file
-}
-
-ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
-
-ffmpeg_options = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn',
-}
-
-# Set up yt_dlp options
-ytdl_format_options = {
-    'format': 'bestaudio/best',
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
-    }],
 }
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
@@ -183,28 +164,19 @@ async def play_command(ctx, *, song_name):
         else:
             voice_client = ctx.voice_client
 
-        # Use YouTube Data API to search for the video
-        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-        request = youtube.search().list(
-            part="snippet",
-            maxResults=1,
-            q=song_name
-        )
-        response = request.execute()
-        if response['items']:
-            video_id = response['items'][0]['id']['videoId']
-            video_url = f"https://www.youtube.com/watch?v={video_id}"
-            title = response['items'][0]['snippet']['title']
+        # Use yt-dlp to search for the video on YouTube
+        search_url = f"ytsearch:{song_name}"
+        info = ytdl.extract_info(search_url, download=False)
+        if info and 'entries' in info and info['entries']:
+            video_info = info['entries'][0]
+            video_url = video_info['url']
+            title = video_info['title']
         else:
             await ctx.send("No song found with the given keywords.")
             return
 
-        # Extract direct audio stream URL using yt-dlp
-        info = ytdl.extract_info(video_url, download=False)
-        audio_url = info['url']
-
         # Add the song to the queue
-        song_queue.append((audio_url, title))
+        song_queue.append((video_url, title))
         await ctx.send(f"Added to queue: {title}")
 
         # Play the song if it's the only one in the queue
@@ -264,35 +236,19 @@ async def loop_command(ctx):
 async def queue_command(ctx):
     """Show the current song queue."""
     if song_queue:
-        queue_message = "Current queue:\n"
-        for i, (audio_url, title) in enumerate(song_queue):
-            queue_message += f"{i+1}. {title}\n"
-        await ctx.send(queue_message)
+        queue_list = "\n".join([f"{i+1}. {title}" for i, (_, title) in enumerate(song_queue)])
+        await ctx.send(f"Current Queue:\n{queue_list}")
     else:
         await ctx.send("The queue is empty.")
 
-@bot.command(name="join")
-async def join_command(ctx):
-    """Join the voice channel."""
-    if ctx.author.voice is None:
-        await ctx.send("You need to be in a voice channel to use this command.")
-        return
-
-    voice_channel = ctx.author.voice.channel
-    if voice_channel:
-        await voice_channel.connect()
-        await ctx.send("Joined the voice channel.")
-
-@bot.command(name="leave")
-async def leave_command(ctx):
-    """Leave the voice channel."""
+@bot.command(name="stop")
+async def stop_command(ctx):
+    """Stop the music and clear the queue."""
     voice_client = ctx.voice_client
-    if voice_client:
-        await voice_client.disconnect()
-        await ctx.send("Left the voice channel.")
-    else:
-        await ctx.send("Not connected to a voice channel.")
+    if voice_client.is_playing():
+        voice_client.stop()
+    song_queue.clear()
+    await ctx.send("Stopped the music and cleared the queue.")
 
-# Run the bot
+# Run the bot with the provided token
 bot.run(BOT_TOKEN)
-
