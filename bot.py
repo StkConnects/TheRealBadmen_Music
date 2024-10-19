@@ -6,6 +6,7 @@ import os
 import requests
 from collections import deque
 from dotenv import load_dotenv
+import asyncio
 
 # Load environment variables from .env file
 load_dotenv()
@@ -22,7 +23,11 @@ ytdl_format_options = {
         'preferredcodec': 'mp3',
         'preferredquality': '192',
     }],
-    'cookiefile': 'youtube_cookies.txt',  # You can place your YouTube cookies here to avoid CAPTCHA
+    'cookiefile': 'youtube_cookies.txt',  # Ensure this file is populated with your YouTube cookies
+    'geo_bypass': True,
+    'headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+    }
 }
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
@@ -36,7 +41,7 @@ ffmpeg_options = {
 intents = Intents.default()
 intents.message_content = True
 intents.members = True
-bot = commands.Bot(command_prefix='*', intents=intents)
+bot = commands.Bot(command_prefix='*', intents=intents, help_command=None)
 
 # Create a queue to hold songs
 song_queue = deque()
@@ -92,9 +97,37 @@ async def play_next_song(voice_client):
                           after=lambda e: bot.loop.create_task(play_next_song(voice_client)))
         await bot.get_channel(voice_client.channel.id).send(f"Now playing: {title}")
 
+async def get_audio_url(video_url):
+    for _ in range(3):  # Try 3 times
+        try:
+            info = ytdl.extract_info(video_url, download=False)
+            return info['url']
+        except Exception as e:
+            if "captcha" in str(e).lower():
+                await asyncio.sleep(5)  # Wait before retrying
+                continue
+            else:
+                raise e  # Raise other errors immediately
+    return None
+
 @bot.event
 async def on_ready():
     print(f'{bot.user} has connected to Discord!')
+
+@bot.command(name="commands")
+async def commands_command(ctx):
+    help_message = (
+        "Here are the commands you can use:\n"
+        "`*play <song name or URL>` - Play a song from YouTube.\n"
+        "`*pause` - Pause the currently playing music.\n"
+        "`*resume` - Resume paused music.\n"
+        "`*skip` - Skip the current song.\n"
+        "`*queue` - Show the current song queue.\n"
+        "`*join` - Join your current voice channel.\n"
+        "`*leave` - Leave the voice channel.\n"
+        "`*points` - Check your points and rank."
+    )
+    await ctx.send(help_message)
 
 @bot.command(name="play")
 async def play_command(ctx, *, song_name_or_url):
@@ -112,7 +145,7 @@ async def play_command(ctx, *, song_name_or_url):
 
         # If it's a URL, process it directly
         if song_name_or_url.startswith("http://") or song_name_or_url.startswith("https://"):
-            audio_url, title = song_name_or_url, song_name_or_url  # Use the URL as both title and URL
+            video_url, title = song_name_or_url, song_name_or_url  # Use the URL as both title and URL
         else:
             # Use YouTube API to search for the video
             video_url, title = search_youtube(song_name_or_url)
@@ -120,9 +153,11 @@ async def play_command(ctx, *, song_name_or_url):
                 await ctx.send("No song found with the given keywords.")
                 return
 
-            # Extract direct audio stream URL using yt-dlp
-            info = ytdl.extract_info(video_url, download=False)
-            audio_url = info['url']
+        # Extract direct audio stream URL using yt-dlp
+        audio_url = await get_audio_url(video_url)
+        if audio_url is None:
+            await ctx.send("Failed to retrieve audio URL after multiple attempts.")
+            return
 
         # Add the song to the queue
         song_queue.append((audio_url, title))
@@ -197,6 +232,39 @@ async def leave_command(ctx):
         await ctx.send("Left the voice channel.")
     else:
         await ctx.send("Not connected to a voice channel.")
+
+@bot.command(name="points")
+async def points_command(ctx):
+    points = user_points.get(ctx.author.id, 0)
+    rank = user_ranks.get(ctx.author.id, "Newbie")
+    await ctx.send(f"You have {points} points. (Rank: {rank})")
+
+def search_youtube(song_name):
+    search_url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        'part': 'snippet',
+        'q': song_name,
+        'key': YOUTUBE_API_KEY,
+        'type': 'video',
+        'maxResults': 1,
+    }
+    response = requests.get(search_url, params=params)
+
+    # Check for errors in the response
+    if response.status_code != 200:
+        print(f"Error fetching data from YouTube API: {response.status_code} - {response.text}")
+        return None, None
+
+    search_results = response.json()
+
+    if search_results.get('items'):
+        video_id = search_results['items'][0]['id']['videoId']
+        video_title = search_results['items'][0]['snippet']['title']
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        return video_url, video_title
+    else:
+        print("No results found for the query.")
+        return None, None
 
 # Run the bot
 bot.run(BOT_TOKEN)
